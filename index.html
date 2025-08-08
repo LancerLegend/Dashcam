@@ -1,0 +1,262 @@
+<!DOCTYPE html>
+<html lang="he" dir="rtl">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>מצלמת דרך 🚗 כפולה</title>
+  <style>
+    body {
+      font-family: Arial;
+      background: #f0f0f0;
+      margin: 0;
+      padding: 0;
+      text-align: center;
+      direction: rtl;
+    }
+
+    header {
+      background: #222;
+      color: #fff;
+      padding: 10px;
+      font-size: 1.6em;
+    }
+
+    video {
+      width: 48%;
+      max-height: 240px;
+      margin: 1%;
+      background: black;
+    }
+
+    .controls {
+      margin: 10px;
+      display: flex;
+      justify-content: center;
+      flex-wrap: wrap;
+      gap: 10px;
+    }
+
+    button {
+      padding: 10px 20px;
+      font-size: 1em;
+      border: none;
+      border-radius: 8px;
+      cursor: pointer;
+      transition: transform 0.1s;
+    }
+
+    button:active {
+      transform: scale(0.95);
+    }
+
+    .start { background: green; color: white; }
+    .stop { background: red; color: white; display: none; }
+    .toggle { background: #555; color: white; }
+    .dual { background: #007bff; color: white; }
+
+    .gallery {
+      padding: 10px;
+    }
+
+    .video-box {
+      margin: 10px auto;
+      width: 90%;
+      max-width: 400px;
+      background: #fff;
+      border-radius: 10px;
+      overflow: hidden;
+      box-shadow: 0 2px 8px rgba(0, 0, 0, 0.2);
+      position: relative;
+    }
+
+    .video-header {
+      background: rgba(0, 0, 0, 0.6);
+      color: white;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: 5px 10px;
+      font-size: 0.9em;
+    }
+
+    .video-header .actions {
+      display: flex;
+      gap: 10px;
+    }
+
+    .video-header button {
+      background: none;
+      border: none;
+      color: white;
+      font-size: 1.1em;
+      cursor: pointer;
+      padding: 0 4px;
+    }
+
+    .video-box video {
+      width: 100%;
+      height: auto;
+      display: block;
+    }
+
+    .locked {
+      border: 3px solid gold;
+    }
+  </style>
+</head>
+<body>
+  <header>מצלמת דרך 🚗 כפולה</header>
+
+  <div>
+    <video id="front" autoplay muted playsinline></video>
+    <video id="rear" autoplay muted playsinline></video>
+  </div>
+
+  <div class="controls">
+    <button id="startBtn" class="start">📹 התחל הקלטה</button>
+    <button id="stopBtn" class="stop">⛔ עצור</button>
+    <button id="toggleBtn" class="toggle">🔄 החלף מצלמה</button>
+    <button id="dualBtn" class="dual">🎥 מצב כפול</button>
+  </div>
+
+  <div id="gallery" class="gallery"></div>
+
+  <script>
+    const startBtn = document.getElementById("startBtn");
+    const stopBtn = document.getElementById("stopBtn");
+    const toggleBtn = document.getElementById("toggleBtn");
+    const dualBtn = document.getElementById("dualBtn");
+    const gallery = document.getElementById("gallery");
+    const frontVideo = document.getElementById("front");
+    const rearVideo = document.getElementById("rear");
+
+    let frontStream, rearStream;
+    let frontRecorder, rearRecorder;
+    let frontChunks = [], rearChunks = [];
+    let currentMode = "environment"; // or "user"
+    let dualMode = false;
+
+    async function getStream(facingMode) {
+      return await navigator.mediaDevices.getUserMedia({
+        video: { facingMode: facingMode },
+        audio: true
+      });
+    }
+
+    async function initSingleCamera() {
+      if (frontStream) frontStream.getTracks().forEach(t => t.stop());
+      frontStream = await getStream(currentMode);
+      frontVideo.srcObject = frontStream;
+      rearVideo.style.display = "none";
+    }
+
+    async function initDualCamera() {
+      if (frontStream) frontStream.getTracks().forEach(t => t.stop());
+      if (rearStream) rearStream.getTracks().forEach(t => t.stop());
+
+      frontStream = await getStream("user");
+      rearStream = await getStream("environment");
+
+      frontVideo.srcObject = frontStream;
+      rearVideo.srcObject = rearStream;
+      rearVideo.style.display = "inline";
+    }
+
+    function startRecording() {
+      frontChunks = [];
+      frontRecorder = new MediaRecorder(frontStream);
+      frontRecorder.ondataavailable = e => frontChunks.push(e.data);
+      frontRecorder.onstop = () => saveClip(frontChunks, "קדמית");
+
+      if (dualMode && rearStream) {
+        rearChunks = [];
+        rearRecorder = new MediaRecorder(rearStream);
+        rearRecorder.ondataavailable = e => rearChunks.push(e.data);
+        rearRecorder.onstop = () => saveClip(rearChunks, "אחורית");
+        rearRecorder.start();
+      }
+
+      frontRecorder.start();
+      startBtn.disabled = true;
+      startBtn.textContent = "מקליט...";
+      stopBtn.style.display = "inline";
+    }
+
+    function stopRecording() {
+      if (frontRecorder && frontRecorder.state !== "inactive") frontRecorder.stop();
+      if (rearRecorder && rearRecorder.state !== "inactive") rearRecorder.stop();
+      startBtn.disabled = false;
+      startBtn.textContent = "📹 התחל הקלטה";
+      stopBtn.style.display = "none";
+    }
+
+    function saveClip(chunks, label) {
+      const blob = new Blob(chunks, { type: "video/webm" });
+      const url = URL.createObjectURL(blob);
+      const box = document.createElement("div");
+      box.className = "video-box";
+
+      const video = document.createElement("video");
+      video.src = url;
+      video.controls = true;
+
+      const header = document.createElement("div");
+      header.className = "video-header";
+
+      const title = document.createElement("span");
+      title.textContent = `🎬 ${label} - ${new Date().toLocaleTimeString()}`;
+
+      const actions = document.createElement("div");
+      actions.className = "actions";
+
+      let locked = false;
+
+      const lockBtn = document.createElement("button");
+      lockBtn.textContent = "🔓";
+      lockBtn.onclick = () => {
+        locked = !locked;
+        box.classList.toggle("locked", locked);
+        lockBtn.textContent = locked ? "🔒" : "🔓";
+      };
+
+      const deleteBtn = document.createElement("button");
+      deleteBtn.textContent = "🗑";
+      deleteBtn.onclick = () => {
+        if (!locked || confirm("הסרטון נעול. למחוק בכל זאת?")) {
+          box.remove();
+        }
+      };
+
+      actions.appendChild(lockBtn);
+      actions.appendChild(deleteBtn);
+      header.appendChild(title);
+      header.appendChild(actions);
+
+      box.appendChild(header);
+      box.appendChild(video);
+      gallery.appendChild(box);
+    }
+
+    toggleBtn.onclick = async () => {
+      currentMode = currentMode === "user" ? "environment" : "user";
+      await initSingleCamera();
+    };
+
+    dualBtn.onclick = async () => {
+      dualMode = !dualMode;
+      if (dualMode) {
+        await initDualCamera();
+        dualBtn.textContent = "🔁 חזור למצלמה בודדת";
+      } else {
+        await initSingleCamera();
+        dualBtn.textContent = "🎥 מצב כפול";
+      }
+    };
+
+    startBtn.onclick = startRecording;
+    stopBtn.onclick = stopRecording;
+
+    window.onload = initSingleCamera;
+  </script>
+</body>
+</html>
