@@ -142,6 +142,19 @@
       animation: pulse 1s infinite;
     }
 
+    .segment-timer {
+      position: absolute;
+      top: 50px;
+      left: 15px;
+      background: rgba(0, 120, 255, 0.8);
+      color: white;
+      padding: 4px 8px;
+      border-radius: 10px;
+      font-size: 11px;
+      font-weight: bold;
+      display: none;
+    }
+
     @keyframes pulse {
       0%, 100% { opacity: 1; }
       50% { opacity: 0.5; }
@@ -229,6 +242,7 @@
       </div>
       <div id="gpsStatus" class="gps-status searching">🔍 מחפש GPS</div>
       <div id="recordingIndicator" class="recording-indicator">🔴 מקליט</div>
+      <div id="segmentTimer" class="segment-timer">⏱️ 0:00</div>
     </div>
   </div>
 
@@ -239,7 +253,7 @@
   </div>
 
   <div class="info-panel">
-    <strong>💡 מידע:</strong> המצלמה תציג חותמת זמן מלאה ומיקום GPS בזמן אמת. וודא שנתת הרשאה למיקום לקבלת נתוני GPS מדויקים.
+    <strong>💡 מידע:</strong> המצלמה תציג חותמת זמן מלאה ומיקום GPS בזמן אמת. הקלטות מתחלקות אוטומטית כל 2 דקות. וודא שנתת הרשאה למיקום לקבלת נתוני GPS מדויקים.
   </div>
 
   <div id="gallery" class="gallery"></div>
@@ -254,6 +268,7 @@
     const gpsInfoEl = document.getElementById("gpsInfo");
     const gpsStatusEl = document.getElementById("gpsStatus");
     const recordingIndicator = document.getElementById("recordingIndicator");
+    const segmentTimer = document.getElementById("segmentTimer");
     const coordinatesEl = document.getElementById("coordinates");
     const accuracyEl = document.getElementById("accuracy");
     const speedEl = document.getElementById("speed");
@@ -267,6 +282,12 @@
     let currentGPS = { lat: null, lng: null, accuracy: null, speed: null };
     let gpsHistory = [];
     let recordingStartTime = null;
+    let segmentStartTime = null;
+    let segmentInterval = null;
+    let segmentNumber = 0;
+    let isRecording = false;
+    
+    const SEGMENT_DURATION = 2 * 60 * 1000; // 2 minutes in milliseconds
 
     // פונקציה לעדכון חותמת הזמן
     function updateTimestamp() {
@@ -283,6 +304,17 @@
         hour12: false
       });
       timestampEl.textContent = `${dateStr} ${timeStr}`;
+    }
+
+    // פונקציה לעדכון טיימר הפלח
+    function updateSegmentTimer() {
+      if (segmentStartTime && isRecording) {
+        const elapsed = Date.now() - segmentStartTime;
+        const remaining = Math.max(0, SEGMENT_DURATION - elapsed);
+        const minutes = Math.floor(remaining / 60000);
+        const seconds = Math.floor((remaining % 60000) / 1000);
+        segmentTimer.textContent = `⏱️ ${minutes}:${seconds.toString().padStart(2, '0')}`;
+      }
     }
 
     // פונקציה להתחלת מעקב GPS
@@ -312,7 +344,7 @@
             gpsStatusEl.className = "gps-status found";
 
             // שמירת נקודת GPS להיסטוריה בזמן הקלטה
-            if (recorder && recorder.state === 'recording') {
+            if (isRecording) {
               const recordingTime = Date.now() - recordingStartTime;
               gpsHistory.push({
                 ...currentGPS,
@@ -349,6 +381,48 @@
       }
     }
 
+    // פונקציה ליצירת פלח הקלטה חדש
+    function startNewSegment() {
+      if (!isRecording) return;
+
+      // סיום הפלח הקודם אם קיים
+      if (recorder && recorder.state === 'recording') {
+        recorder.stop();
+      }
+
+      // איפוס נתוני הפלח
+      chunks = [];
+      segmentStartTime = Date.now();
+      segmentNumber++;
+
+      // יצירת מקליט חדש
+      recorder = new MediaRecorder(stream);
+      recorder.ondataavailable = e => chunks.push(e.data);
+      recorder.onstop = () => {
+        if (chunks.length > 0) {
+          const segmentGPS = gpsHistory.filter(point => 
+            point.timestamp >= segmentStartTime - 1000 && 
+            point.timestamp <= Date.now()
+          );
+          saveClip(chunks, `פלח ${segmentNumber}`, segmentGPS);
+        }
+        
+        // התחלת פלח חדש אם עדיין מקליטים
+        if (isRecording) {
+          setTimeout(startNewSegment, 100);
+        }
+      };
+
+      recorder.start();
+
+      // הגדרת טיימר לסיום הפלח
+      setTimeout(() => {
+        if (recorder && recorder.state === 'recording' && isRecording) {
+          recorder.stop();
+        }
+      }, SEGMENT_DURATION);
+    }
+
     async function getStream(facingMode) {
       return await navigator.mediaDevices.getUserMedia({
         video: { facingMode: facingMode },
@@ -376,30 +450,47 @@
     }
 
     function startRecording() {
-      chunks = [];
       gpsHistory = [];
       recordingStartTime = Date.now();
+      segmentNumber = 0;
+      isRecording = true;
       
-      recorder = new MediaRecorder(stream);
-      recorder.ondataavailable = e => chunks.push(e.data);
-      recorder.onstop = () => saveClip(chunks, "הקלטה", [...gpsHistory]);
-
-      recorder.start();
+      // הצגת אינדיקטורי הקלטה
       startBtn.disabled = true;
       startBtn.textContent = "🔴 מקליט...";
       stopBtn.style.display = "inline";
       recordingIndicator.style.display = "block";
+      segmentTimer.style.display = "block";
+
+      // התחלת עדכון טיימר הפלח
+      segmentInterval = setInterval(updateSegmentTimer, 1000);
+
+      // התחלת הפלח הראשון
+      startNewSegment();
     }
 
     function stopRecording() {
+      isRecording = false;
+      
       if (recorder && recorder.state !== "inactive") {
         recorder.stop();
       }
+
+      // ניקוי טיימרים
+      if (segmentInterval) {
+        clearInterval(segmentInterval);
+        segmentInterval = null;
+      }
+
+      // החזרת ממשק המשתמש למצב רגיל
       startBtn.disabled = false;
       startBtn.textContent = "📹 התחל הקלטה";
       stopBtn.style.display = "none";
       recordingIndicator.style.display = "none";
+      segmentTimer.style.display = "none";
       recordingStartTime = null;
+      segmentStartTime = null;
+      segmentNumber = 0;
     }
 
     function saveClip(chunks, label, gpsData) {
@@ -457,7 +548,7 @@
       downloadBtn.onclick = () => {
         const a = document.createElement('a');
         a.href = url;
-        a.download = `dashcam_${recordingDate.toISOString().slice(0, 19).replace(/:/g, '-')}.webm`;
+        a.download = `dashcam_${label.replace(/\s+/g, '_')}_${recordingDate.toISOString().slice(0, 19).replace(/:/g, '-')}.webm`;
         a.click();
       };
 
@@ -480,7 +571,9 @@
 
       box.appendChild(header);
       box.appendChild(video);
-      gallery.appendChild(box);
+      
+      // הוספה בראש הגלריה (הסרטונים החדשים יופיעו למעלה)
+      gallery.insertBefore(box, gallery.firstChild);
     }
 
     toggleBtn.onclick = async () => {
@@ -495,6 +588,7 @@
     window.addEventListener('beforeunload', () => {
       stopGPSTracking();
       if (timestampInterval) clearInterval(timestampInterval);
+      if (segmentInterval) clearInterval(segmentInterval);
       if (stream) stream.getTracks().forEach(t => t.stop());
     });
 
